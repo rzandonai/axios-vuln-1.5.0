@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  mock-imds:
+    build: ./mock-imds
+    container_name: mock-imds
+    ports:
+      - "8080:80"       # ブラウザから http://localhost:8080 で到達可能
+    networks:
+      lab-net:
+        aliases:
+          - mock-imds
+          - 169.254.169.254  # AWSメタデータサービスのIPを模倣
+
+  victim:
+    build: ./victim
+    container_name: victim
+    depends_on:
+      - mock-imds
+    networks:
+      - lab-net
+
+  ssr-app:
+    build: ./ssr-app
+    container_name: ssr-app
+    ports:
+      - "4000:4000"     # SSR攻撃デモ: http://localhost:4000
+    depends_on:
+      - mock-imds
+    networks:
+      - lab-net
+
+networks:
+  lab-net:
+    driver: bridge
