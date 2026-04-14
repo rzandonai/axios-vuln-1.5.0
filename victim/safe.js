@@ -1,30 +1,29 @@
 /**
- * CVE-2026-40175 検証スクリプト
+ * CVE-2026-40175 verification script
  *
- * カスタムアダプターを使い、Node.js の http モジュールを介さず
- * axios 自身のヘッダーバリデーション層だけを検証する。
+ * Uses custom adapter to verify axios header validation layer only,
+ * bypassing Node.js http module CRLF validation.
  *
- * - axios@1.14.0（脆弱）: CRLF がバリデーションされずアダプターに到達する
- * - axios@1.15.0（修正済み）: assertValidHeaderValue が CRLF を検出し、
- *   アダプター呼び出し前にエラーを投げる
+ * - axios@1.14.0 (vulnerable): CRLF passes validation, reaches adapter
+ * - axios@1.15.0 (fixed): assertValidHeaderValue detects CRLF, throws error before adapter
  *
- * 実行方法:
- *   # v1.14.0 で実行（脆弱 → CRLF が素通り）
+ * Usage:
+ *   # Run with v1.14.0 (vulnerable → CRLF passes)
  *   docker compose run --rm victim node safe.js
  *
- *   # v1.15.0 にアップグレードして実行（修正済み → エラーが出る）
+ *   # Upgrade to v1.15.0 and run (fixed → error thrown)
  *   docker compose run --rm victim sh -c "npm install axios@1.15.0 && node safe.js"
  */
 
 const axios = require('axios');
 const installedVersion = require('axios/package.json').version;
 
-console.log(`=== CVE-2026-40175 検証 (axios@${installedVersion}) ===\n`);
+console.log(`=== CVE-2026-40175 verification (axios@${installedVersion}) ===\n`);
 
 // ============================================================
-// カスタムアダプター
-// 実際の HTTP 送信をスキップし、axios が組み立てたヘッダーを返すだけ。
-// Node.js の http モジュールの CRLF バリデーションを完全に回避する。
+// Custom adapter
+// Skips actual HTTP sending, returns axios-assembled headers.
+// Completely bypasses Node.js http module CRLF validation.
 // ============================================================
 const captureAdapter = (config) => {
   return Promise.resolve({
@@ -40,7 +39,7 @@ const captureAdapter = (config) => {
 const client = axios.create({ adapter: captureAdapter });
 
 // ============================================================
-// Step 1: プロトタイプ汚染（exploit.js と同じ攻撃の前提）
+// Step 1: Prototype pollution (same premise as exploit.js)
 // ============================================================
 const CRLF_PAYLOAD =
   'dummy\r\n\r\n' +
@@ -51,28 +50,28 @@ const CRLF_PAYLOAD =
 
 Object.prototype['x-inject'] = CRLF_PAYLOAD;
 
-console.log('[1] プロトタイプ汚染を実行');
-console.log('    Object.prototype["x-inject"] に CRLF 密輸ペイロードをセット\n');
+console.log('[1] Executed prototype pollution');
+console.log('    Object.prototype["x-inject"] set with CRLF smuggling payload\n');
 
 async function main() {
   // ============================================================
-  // テスト①: プロトタイプ汚染だけでヘッダーが混入するか？
-  // axios は内部で Object.keys() を使うため、プロトタイプを辿らない。
-  // → v1.14.0 でもこの経路では汚染値は混入しない。
+// Test ①: Does prototype pollution mix into headers alone?
+// axios uses Object.keys() for header processing, ignores prototype.
+// → Even v1.14.0 doesn't leak via this path.
   // ============================================================
-  console.log('[2] プロトタイプ汚染状態で通常リクエスト（ヘッダー明示なし）...');
+  console.log('[2] Prototype pollution state, normal request (no explicit headers)...');
   try {
     const res = await client.get('http://169.254.169.254/latest/meta-data/');
     const headers = res.data.capturedHeaders;
-    // プロトタイプチェーンを辿らず own property かどうかで判定する。
-    // headers['x-inject'] は Object.prototype 経由でも値が返るため誤検知になる。
+    // Determine by checking if it's own property, not traversing prototype chain.
+    // headers['x-inject'] returns value even via Object.prototype, causing false positive.
     const leaked = Object.prototype.hasOwnProperty.call(headers, 'x-inject');
     if (leaked) {
-      console.log('    ⚠️  プロトタイプ汚染値が axios のヘッダーに own property として混入！');
+      console.log('    ⚠️  Prototype pollution value mixed into axios headers as own property!');
       console.log('    x-inject:', JSON.stringify(String(headers['x-inject'])).slice(0, 60) + '...');
     } else {
-      console.log('    プロトタイプ汚染値はヘッダーに混入しなかった');
-      console.log('    （axios は Object.keys() でヘッダーを処理するため、プロトタイプを辿らない）');
+      console.log('    Prototype pollution value did not mix into headers');
+      console.log('    (axios uses Object.keys() for header processing, does not traverse prototype)');
     }
   } catch (e) {
     console.log('    エラー:', e.message);
@@ -80,38 +79,38 @@ async function main() {
   console.log();
 
   // ============================================================
-  // テスト②: CRLF を含むヘッダーを axios に直接渡す
-  // ★ これが CVE-2026-40175 の本質的なテスト ★
+  // Test ②: Pass CRLF-containing headers directly to axios
+  // ★ This is the essential test for CVE-2026-40175 ★
   //
-  // v1.14.0: normalizeValue が末尾の \r\n しか除去しないため
-  //          CRLF がアダプターまで素通りする → 脆弱
+  // v1.14.0: normalizeValue only removes trailing \r\n
+  //          CRLF passes through to adapter → vulnerable
   //
-  // v1.15.0: assertValidHeaderValue が \r\n を検出して即エラー
-  //          → アダプターへ到達しない → 修正済み
+  // v1.15.0: assertValidHeaderValue detects \r\n and throws error immediately
+  //          → doesn't reach adapter → fixed
   // ============================================================
-  console.log('[3] ★ CVE 検証: CRLF を含むヘッダーを axios に直接渡す...');
+  console.log('[3] ★ CVE verification: Directly pass CRLF-containing header to axios...');
   try {
     const res = await client.get('http://169.254.169.254/latest/meta-data/', {
       headers: { 'x-inject': CRLF_PAYLOAD },
     });
 
-    // アダプターに到達した = CRLF がバリデーションをすり抜けた
+    // Reaching adapter = CRLF bypassed validation → vulnerable
     const sentValue = res.data.capturedHeaders['x-inject'];
-    console.log(`\n    ⚠️  [axios@${installedVersion}] CRLF がバリデーションされずにアダプターに到達！`);
-    console.log('    実際に送信されようとしたヘッダー値:');
+    console.log(`\n    ⚠️  [axios@${installedVersion}] CRLF reached adapter without validation!`);
+    console.log('    Header value that was about to be sent:');
     console.log('    ' + JSON.stringify(String(sentValue)));
-    console.log('\n    → このバージョンは CVE-2026-40175 に対して脆弱です。');
-    console.log('    → 実際の HTTP 送信では CRLF でリクエストが分裂し、');
-    console.log('       密輸された PUT /latest/api/token が IMDS に届きます。');
-    console.log('\n    修正を確認するには:');
+    console.log('\n    → This version is vulnerable to CVE-2026-40175.');
+    console.log('    → In actual HTTP sending, request splits on CRLF,');
+    console.log('       smuggled PUT /latest/api/token reaches IMDS.');
+    console.log('\n    To confirm fix:');
     console.log('    docker compose run --rm victim sh -c "npm install axios@1.15.0 && node safe.js"');
   } catch (e) {
     if (e.message && e.message.includes('Invalid character in header content')) {
       console.log(`\n    ✅ [axios@${installedVersion}] ブロックされました: ${e.message}`);
-      console.log('    → assertValidHeaderValue が CRLF を検出し、アダプターへ到達する前にエラーを投げた！');
-      console.log('    → CVE-2026-40175 に対して修正済みです。');
+      console.log('    → assertValidHeaderValue detected CRLF and threw error before reaching adapter!');
+      console.log('    → Fixed for CVE-2026-40175.');
     } else {
-      console.log('    予期しないエラー:', e.message);
+      console.log('    Unexpected error:', e.message);
     }
   }
 }

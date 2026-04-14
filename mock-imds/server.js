@@ -12,12 +12,12 @@ const FAKE_CREDENTIALS = {
 };
 
 const server = http.createServer((req, res) => {
-  // ブラウザからのクロスオリジンリクエストを許可（教育目的ラボのため）
+  // Allow cross-origin requests from browser (for educational lab purposes)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
 
-  // OPTIONSプリフライトリクエストへの応答
+  // OPTIONS preflight request response
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -31,21 +31,21 @@ const server = http.createServer((req, res) => {
     console.log(`  ${k}: ${v}`);
   });
 
-  // IMDSv2: PUTリクエストでトークン発行
+  // IMDSv2: PUT request to issue token
   if (req.method === 'PUT' && req.url === '/latest/api/token') {
     const ttl = req.headers['x-aws-ec2-metadata-token-ttl-seconds'];
-    console.log(`\n[IMDS] ⚠️  IMDSv2トークン発行リクエスト検知！TTL=${ttl}`);
-    console.log('[IMDS] 🔑 偽トークンを返します...');
+    console.log(`\n[IMDS] ⚠️  IMDSv2 token issuance request detected! TTL=${ttl}`);
+    console.log('[IMDS] 🔑  Returning fake token...');
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end(FAKE_TOKEN);
     return;
   }
 
-  // IAM認証情報の取得
+  // Retrieving IAM credentials
   if (req.url.startsWith('/latest/meta-data/iam/security-credentials')) {
     const token = req.headers['x-aws-ec2-metadata-token'];
     if (token === FAKE_TOKEN) {
-      console.log('\n[IMDS] 🚨 IAM認証情報が窃取されました！');
+      console.log('\n[IMDS] 🚨 IAM credentials have been stolen!');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(FAKE_CREDENTIALS, null, 2));
     } else {
@@ -55,12 +55,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // その他のリクエスト
+  // Other requests
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('mock-imds OK');
 });
 
 server.listen(80, () => {
-  console.log('[IMDS] 偽AWSメタデータサーバー起動 (port 80)');
-  console.log('[IMDS] 169.254.169.254 の代役として待機中...\n');
+  console.log('[IMDS] Fake AWS metadata server started (port 80)');
+  console.log('[IMDS] Acting as 169.254.169.254...\n');
 });
